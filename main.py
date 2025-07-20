@@ -87,7 +87,44 @@ def parse_schedule(schedule: str) -> tuple[int, Frequency]:
 
 
 def parse_date(date_str: str) -> date:
-    return datetime.strptime(date_str, "%d/%m/%Y").date()
+    """
+    Parses a date string into a date object. Supports multiple formats.
+
+    Args:
+        date_str (str): The date string to parse.
+
+    Returns:
+        date: The parsed date object.
+
+    Raises:
+        ValueError: If the date string does not match any supported format.
+    """
+    formats = [
+        "%d/%m/%Y",  # e.g., 20/07/2025
+        "%d/%m/%y",  # e.g., 20/7/25
+        "%d-%m-%Y",  # e.g., 20-07-2025
+        "%d-%m-%y",  # e.g., 20-7-25
+        "%d %b %Y",  # e.g., 20 Jul 2025
+        "%d %B %Y",  # e.g., 20 July 2025
+        "%d %b %y",  # e.g., 20 Jul 25
+        "%d %B %y",  # e.g., 20 July 25
+        "%dth %b %Y",  # e.g., 20th Jul 2025
+        "%dth %B %Y",  # e.g., 20th July 2025
+        "%dnd %b %Y",  # e.g., 22nd Jul 2025
+        "%dnd %B %Y",  # e.g., 22nd July 2025
+        "%drd %b %Y",  # e.g., 23rd Jul 2025
+        "%drd %B %Y",  # e.g., 23rd July 2025
+        "%dst %b %Y",  # e.g., 21st Jul 2025
+        "%dst %B %Y",  # e.g., 21st July 2025
+    ]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_str, fmt).date()
+        except ValueError:
+            continue
+
+    raise ValueError(f"Date '{date_str}' is not in a recognized format.")
 
 
 def check_user_has_emoji(user_id: str, user_emojis: dict) -> bool:
