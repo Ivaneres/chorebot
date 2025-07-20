@@ -3,12 +3,12 @@ from discord import app_commands
 from data import Frequency, Chore, Datastore
 from datetime import date, datetime, timedelta
 import asyncio
+from emoji import is_emoji
 import os
-import copy
 
 
 DATA_FILE = "data.json"
-INTRO_MESSAGE = "Welcome to ChoreBot!\n\nTo get started, add some chores using the \"add_chore\" command."
+INTRO_MESSAGE = "Welcome to ChoreBot!\n\nTo get started, set your emoji using the \"/set_emoji\" command, then set some chores using the \"/add_chore\" command."
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -200,9 +200,28 @@ async def set_emoji(interaction: discord.Interaction, emoji: str):
     """
     Links the given emoji to the user in the DB, so it can be used to raise chore reactions.
     """
+    # verify that the emoji is valid (no text, only one emoji)
+    if not emoji or not is_emoji(emoji):
+        await interaction.response.send_message("Please provide a valid single emoji.")
+        await asyncio.sleep(10)
+        await interaction.delete_original_response()
+        return
+
     user_id = str(interaction.user.id)
+    old_emoji = DATASTORE.user_emojis.get(user_id)
     DATASTORE.user_emojis[user_id] = emoji
     DATASTORE.save_to_file()
+
+    # Loop through all existing messages and change the reactions to the new emoji for this user
+    channel = client.get_channel(DATASTORE.chore_channel_id)
+    if channel:
+        messages = [message async for message in channel.history(limit=100)]
+        for message in messages:
+            if any(reaction.emoji == old_emoji for reaction in message.reactions):
+                # Remove the old reaction and add the new one
+                await message.clear_reactions()
+                await message.add_reaction(emoji)
+
     await interaction.response.send_message(f"Emoji set to {emoji} for you.")
     await asyncio.sleep(10)
     await interaction.delete_original_response()
@@ -538,6 +557,22 @@ async def assign_chore(interaction: discord.Interaction, title: str, user: disco
     await interaction.response.send_message(f"Chore '{title}' has been assigned to {user.mention}.")
     await asyncio.sleep(10)
     await interaction.delete_original_response()
+
+
+@client.event
+async def on_message(message: discord.Message):
+    # detect and delete any messages in the chore channel that are not commands
+    if message.author == client.user:
+        return
+
+    if message.channel.id == DATASTORE.chore_channel_id:
+        # Check if the message is a command
+        if not message.content.startswith('/'):
+            response = await message.channel.send("Please only use ChoreBot commands in this channel. (To keep it ✨clean✨)")
+            await message.delete()
+            await asyncio.sleep(10)
+            await response.delete()
+            return
 
 
 client.run(os.getenv("DISCORD_TOKEN"))
