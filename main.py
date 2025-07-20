@@ -184,6 +184,8 @@ async def add_chore(interaction: discord.Interaction, title: str, assignee: disc
     if start_date:
         try:
             start_date_parsed = parse_date(start_date)
+            if start_date_parsed < date.today():
+                raise ValueError("Start date cannot be in the past.")
         except ValueError as e:
             await interaction.response.send_message(f"Error: {e}")
             await asyncio.sleep(10)
@@ -295,6 +297,8 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
     elif new_due_date:
         try:
             chore.due_date = parse_date(new_due_date)  # Validate the date format
+            if chore.due_date < date.today():
+                raise ValueError("Due date cannot be in the past.")
         except ValueError as e:
             await interaction.response.send_message(f"Error: {e}")
             await asyncio.sleep(10)
