@@ -154,17 +154,15 @@ async def add_chore(interaction: discord.Interaction, title: str, assignee: disc
         return
 
     # Check for duplicate chore titles
-    if any(chore.title == title for chore in DATASTORE.chores):
+    if find_chore_by_title(title) is not None:
         await interaction.response.send_message(f"A chore with the title '{title}' already exists.")
-        await asyncio.sleep(10)
-        await interaction.delete_original_response()
+        await delete_after_delay(interaction)
         return
 
     # Check if the assignee has an emoji set
     if assignee and str(assignee.id) not in DATASTORE.user_emojis:
         await interaction.response.send_message(f"Error: {assignee.mention} does not have an emoji set. Please set an emoji first using the `/set_emoji` command.")
-        await asyncio.sleep(10)
-        await interaction.delete_original_response()
+        await delete_after_delay(interaction)
         return
 
     # Allow chores with no due date, frequency, or repeats
@@ -177,8 +175,7 @@ async def add_chore(interaction: discord.Interaction, title: str, assignee: disc
             repeats, frequency = parse_schedule(schedule)
         except ValueError as e:
             await interaction.response.send_message(f"Error: {e}")
-            await asyncio.sleep(10)
-            await interaction.delete_original_response()
+            await delete_after_delay(interaction)
             return
 
     if start_date:
@@ -188,8 +185,7 @@ async def add_chore(interaction: discord.Interaction, title: str, assignee: disc
                 raise ValueError("Start date cannot be in the past.")
         except ValueError as e:
             await interaction.response.send_message(f"Error: {e}")
-            await asyncio.sleep(10)
-            await interaction.delete_original_response()
+            await delete_after_delay(interaction)
             return
 
     # Create a new chore object
@@ -227,8 +223,7 @@ async def add_chore(interaction: discord.Interaction, title: str, assignee: disc
         await message.add_reaction(DATASTORE.user_emojis[str(assignee.id)])
 
     await interaction.response.send_message(f"Chore '{title}' added successfully!")
-    await asyncio.sleep(10)
-    await interaction.delete_original_response()
+    await delete_after_delay(interaction)
 
 
 @tree.command(
@@ -242,8 +237,7 @@ async def set_emoji(interaction: discord.Interaction, emoji: str):
     # verify that the emoji is valid (no text, only one emoji)
     if not emoji or not is_emoji(emoji):
         await interaction.response.send_message("Please provide a valid single emoji.")
-        await asyncio.sleep(10)
-        await interaction.delete_original_response()
+        await delete_after_delay(interaction)
         return
 
     user_id = str(interaction.user.id)
@@ -262,8 +256,7 @@ async def set_emoji(interaction: discord.Interaction, emoji: str):
                 await message.add_reaction(emoji)
 
     await interaction.response.send_message(f"Emoji set to {emoji} for you.")
-    await asyncio.sleep(10)
-    await interaction.delete_original_response()
+    await delete_after_delay(interaction)
 
 
 @tree.command(
@@ -272,18 +265,16 @@ async def set_emoji(interaction: discord.Interaction, emoji: str):
 )
 async def edit_chore(interaction: discord.Interaction, title: str, new_title: str = None, new_due_date: str = None, new_assignee: discord.User = None, new_frequency: str = None, new_repeats: str = None):
     # Find the chore to edit
-    chore = next((c for c in DATASTORE.chores if c.title == title), None)
+    chore = find_chore_by_title(title)
     if chore is None:
         await interaction.response.send_message(f"Chore '{title}' not found.")
-        await asyncio.sleep(10)
-        await interaction.delete_original_response()
+        await delete_after_delay(interaction)
         return
 
     # Check if the new assignee has an emoji set
     if new_assignee and str(new_assignee.id) not in DATASTORE.user_emojis:
         await interaction.response.send_message(f"Error: {new_assignee.mention} does not have an emoji set. Please set an emoji first using the `/set_emoji` command.")
-        await asyncio.sleep(10)
-        await interaction.delete_original_response()
+        await delete_after_delay(interaction)
         return
 
     # Update the chore details
@@ -301,8 +292,7 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
                 raise ValueError("Due date cannot be in the past.")
         except ValueError as e:
             await interaction.response.send_message(f"Error: {e}")
-            await asyncio.sleep(10)
-            await interaction.delete_original_response()
+            await delete_after_delay(interaction)
             return
 
     if new_assignee:
@@ -313,8 +303,7 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
             chore.frequency = parse_frequency(new_frequency)
         except ValueError as e:
             await interaction.response.send_message(f"Error: {e}")
-            await asyncio.sleep(10)
-            await interaction.delete_original_response()
+            await delete_after_delay(interaction)
             return
 
     if new_repeats == "None":
@@ -324,8 +313,7 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
             chore.repeats = int(new_repeats)
         except ValueError:
             await interaction.response.send_message("Error: Repeats must be an integer.")
-            await asyncio.sleep(10)
-            await interaction.delete_original_response()
+            await delete_after_delay(interaction)
             return
 
     # Save the updated chores back to the datastore
@@ -352,8 +340,7 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
                 break
 
     await interaction.response.send_message(f"Chore '{title}' updated successfully!")
-    await asyncio.sleep(10)
-    await interaction.delete_original_response()
+    await delete_after_delay(interaction)
 
 
 @tree.command(
@@ -362,11 +349,10 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
 )
 async def delete_chore(interaction: discord.Interaction, title: str):
     # Find the chore to delete
-    chore = next((c for c in DATASTORE.chores if c.title == title), None)
+    chore = find_chore_by_title(title)
     if chore is None:
         await interaction.response.send_message(f"Chore '{title}' not found.")
-        await asyncio.sleep(10)
-        await interaction.delete_original_response()
+        await delete_after_delay(interaction)
         return
 
     # Remove the chore from the list
@@ -385,8 +371,7 @@ async def delete_chore(interaction: discord.Interaction, title: str):
                 break
 
     await interaction.response.send_message(f"Chore '{title}' deleted successfully!")
-    await asyncio.sleep(10)
-    await interaction.delete_original_response()
+    await delete_after_delay(interaction)
 
 
 @tree.command(
@@ -516,9 +501,8 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     channel = client.get_channel(channel_id)
     message = await channel.fetch_message(payload.message_id)
     chore_title = message.content.split("\n")[0].replace("**Chore:** ", "")
-
-    chores = DATASTORE.chores
-    chore = next((c for c in chores if c.title == chore_title), None)
+    
+    chore = find_chore_by_title(chore_title)
     if not chore:
         raise ValueError(f"Chore with title '{chore_title}' not found in data.")
 
@@ -563,16 +547,14 @@ async def assign_chore(interaction: discord.Interaction, title: str, user: disco
     # Check if the user has an emoji set
     if str(user.id) not in DATASTORE.user_emojis:
         await interaction.response.send_message(f"Error: {user.mention} does not have an emoji set. Please set an emoji first using the `/set_emoji` command.")
-        await asyncio.sleep(10)
-        await interaction.delete_original_response()
+        await delete_after_delay(interaction)
         return
 
     # Find the chore to assign
-    chore = next((c for c in DATASTORE.chores if c.title == title), None)
+    chore = find_chore_by_title(title)
     if chore is None:
         await interaction.response.send_message(f"Chore '{title}' not found.")
-        await asyncio.sleep(10)
-        await interaction.delete_original_response()
+        await delete_after_delay(interaction)
         return
 
     # Assign the chore to the specified user
@@ -598,8 +580,7 @@ async def assign_chore(interaction: discord.Interaction, title: str, user: disco
                 break
 
     await interaction.response.send_message(f"Chore '{title}' has been assigned to {user.mention}.")
-    await asyncio.sleep(10)
-    await interaction.delete_original_response()
+    await delete_after_delay(interaction)
 
 
 @client.event
@@ -613,9 +594,45 @@ async def on_message(message: discord.Message):
         if not message.content.startswith('/'):
             response = await message.channel.send("Please only use ChoreBot commands in this channel. (To keep it ✨clean✨)")
             await message.delete()
-            await asyncio.sleep(10)
-            await response.delete()
+            await delete_after_delay(response)
             return
+
+
+def find_chore_by_title(title: str) -> Chore | None:
+    """
+    Finds a chore by its title in a case-insensitive way.
+
+    Args:
+        title (str): The title of the chore to find.
+
+    Returns:
+        Chore | None: The found chore or None if not found.
+    """
+    return next((c for c in DATASTORE.chores if c.title.lower() == title.lower()), None)
+
+
+async def delete_after_delay(interaction_or_message, delay_seconds: int = 10):
+    """
+    Waits for the specified delay and then deletes the message.
+    
+    Args:
+        interaction_or_message: Either a discord.Interaction or discord.Message
+        delay_seconds: Number of seconds to wait before deleting. Defaults to 10.
+    """
+    await asyncio.sleep(delay_seconds)
+    
+    if isinstance(interaction_or_message, discord.Interaction):
+        try:
+            await interaction_or_message.delete_original_response()
+        except discord.NotFound:
+            # Message might have been deleted already
+            pass
+    else:
+        try:
+            await interaction_or_message.delete()
+        except (discord.NotFound, AttributeError):
+            # Message might have been deleted already or doesn't support deletion
+            pass
 
 
 client.run(os.getenv("DISCORD_TOKEN"))
