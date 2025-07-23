@@ -460,6 +460,8 @@ async def schedule_reminders():
                 await send_reminder(chore, "Upcoming")
             if today == chore.due_date:
                 await send_reminder(chore, "Due Today")
+            if chore.due_date < today:
+                await send_reminder(chore, "Overdue")
 
 
 def is_chore_scheduled(chore: Chore) -> bool:
