@@ -50,7 +50,8 @@ class Chore:
 @dataclass
 class Datastore:
     chores: list[Chore]
-    chore_channel_id: int
+    chore_channel_id: int | None
+    reminder_channel_id: int | None
     user_emojis: dict[str, str]
     filepath: Path
 
@@ -65,7 +66,8 @@ class Datastore:
         chores = [Chore.from_dict(chore, client) for chore in data.get("chores", [])]
         return Datastore(
             chores=chores,
-            chore_channel_id=data.get("chore_channel_id", 0),
+            chore_channel_id=data.get("chore_channel_id"),
+            reminder_channel_id=data.get("reminder_channel_id"),
             user_emojis=data.get("user_emojis", {}),
             filepath=filepath
         )
@@ -74,6 +76,7 @@ class Datastore:
         data = {
             "chores": [chore.to_json() for chore in self.chores],
             "chore_channel_id": self.chore_channel_id,
+            "reminder_channel_id": self.reminder_channel_id,
             "user_emojis": self.user_emojis
         }
         

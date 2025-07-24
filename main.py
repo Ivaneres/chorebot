@@ -5,6 +5,18 @@ from datetime import date, datetime, timedelta
 import asyncio
 from emoji import is_emoji
 import os
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('chorebot.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('ChoreBot')
 
 
 DATA_FILE = "data.json"
@@ -22,13 +34,13 @@ DATASTORE = Datastore.load_from_file("data.json", client)
 
 @client.event
 async def on_ready():
-    print(f'Logged in as {client.user}')
+    logger.info(f'Logged in as {client.user}')
     try:
         # Sync the command tree with Discord
         await tree.sync()
-        print("Slash commands synchronized successfully.")
+        logger.info("Slash commands synchronized successfully.")
     except Exception as e:
-        print(f"Failed to sync commands: {e}")
+        logger.error(f"Failed to sync commands: {e}")
 
     client.loop.create_task(schedule_reminders())
 
@@ -41,6 +53,7 @@ async def setup_channel(interaction: discord.Interaction):
     channel_id = interaction.channel_id
     DATASTORE.chore_channel_id = channel_id
     DATASTORE.save_to_file()
+    logger.info(f"Set up chore channel with ID: {channel_id}")
 
     # Delete all messages in the channel
     channel = interaction.channel
@@ -147,14 +160,17 @@ def check_user_has_emoji(user_id: str, user_emojis: dict) -> bool:
 )
 async def add_chore(interaction: discord.Interaction, title: str, assignee: discord.User, start_date: str = None, schedule: str = None):
     if DATASTORE.chore_channel_id == 0:
+        logger.error("Attempted to add chore before channel setup")
         await interaction.response.send_message("Must set up a channel first.")
         return
     if DATASTORE.chore_channel_id != interaction.channel_id:
+        logger.warning(f"Attempted to add chore in wrong channel {interaction.channel_id}")
         await interaction.response.send_message("This is not allowed here, please run this command in your chore channel.")
         return
 
     # Check for duplicate chore titles
     if find_chore_by_title(title) is not None:
+        logger.warning(f"Attempted to add duplicate chore: {title}")
         await interaction.response.send_message(f"A chore with the title '{title}' already exists.")
         await delete_after_delay(interaction)
         return
@@ -200,6 +216,7 @@ async def add_chore(interaction: discord.Interaction, title: str, assignee: disc
     # Save the chore to the datastore
     DATASTORE.chores.append(chore)
     DATASTORE.save_to_file()
+    logger.info(f"Added new chore: {title} (assigned to: {assignee.name if assignee else 'None'})")
 
     # Send a message to the channel with the chore details
     channel = client.get_channel(DATASTORE.chore_channel_id)
@@ -236,6 +253,7 @@ async def set_emoji(interaction: discord.Interaction, emoji: str):
     """
     # verify that the emoji is valid (no text, only one emoji)
     if not emoji or not is_emoji(emoji):
+        logger.warning(f"Invalid emoji attempted: {emoji} by user {interaction.user.name}")
         await interaction.response.send_message("Please provide a valid single emoji.")
         await delete_after_delay(interaction)
         return
@@ -244,16 +262,21 @@ async def set_emoji(interaction: discord.Interaction, emoji: str):
     old_emoji = DATASTORE.user_emojis.get(user_id)
     DATASTORE.user_emojis[user_id] = emoji
     DATASTORE.save_to_file()
+    logger.info(f"User {interaction.user.name} changed emoji from {old_emoji if old_emoji else 'None'} to {emoji}")
 
     # Loop through all existing messages and change the reactions to the new emoji for this user
     channel = client.get_channel(DATASTORE.chore_channel_id)
     if channel:
         messages = [message async for message in channel.history(limit=100)]
+        updated_count = 0
         for message in messages:
             if any(reaction.emoji == old_emoji for reaction in message.reactions):
                 # Remove the old reaction and add the new one
                 await message.clear_reactions()
                 await message.add_reaction(emoji)
+                updated_count += 1
+        if updated_count > 0:
+            logger.info(f"Updated emoji reactions in {updated_count} messages")
 
     await interaction.response.send_message(f"Emoji set to {emoji} for you.")
     await delete_after_delay(interaction)
@@ -267,9 +290,25 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
     # Find the chore to edit
     chore = find_chore_by_title(title)
     if chore is None:
+        logger.warning(f"Attempted to edit non-existent chore: {title}")
         await interaction.response.send_message(f"Chore '{title}' not found.")
         await delete_after_delay(interaction)
         return
+
+    # Log the changes being made
+    changes = []
+    if new_title:
+        changes.append(f"title: {title} -> {new_title}")
+    if new_due_date:
+        changes.append(f"due_date: {chore.due_date} -> {new_due_date}")
+    if new_assignee:
+        changes.append(f"assignee: {chore.assignee.name if chore.assignee else 'None'} -> {new_assignee.name}")
+    if new_frequency:
+        changes.append(f"frequency: {chore.frequency.value if chore.frequency else 'None'} -> {new_frequency}")
+    if new_repeats:
+        changes.append(f"repeats: {chore.repeats} -> {new_repeats}")
+    
+    logger.info(f"Editing chore '{title}'. Changes: {', '.join(changes)}")
 
     # Check if the new assignee has an emoji set
     if new_assignee and str(new_assignee.id) not in DATASTORE.user_emojis:
@@ -351,14 +390,13 @@ async def delete_chore(interaction: discord.Interaction, title: str):
     # Find the chore to delete
     chore = find_chore_by_title(title)
     if chore is None:
+        logger.warning(f"Attempted to delete non-existent chore: {title}")
         await interaction.response.send_message(f"Chore '{title}' not found.")
         await delete_after_delay(interaction)
         return
 
-    # Remove the chore from the list
+    logger.info(f"Deleting chore: {title}")
     DATASTORE.chores.remove(chore)
-
-    # Save the updated chores back to the datastore
     DATASTORE.save_to_file()
 
     # Delete the original message in the chore channel
@@ -382,8 +420,8 @@ async def set_reminder_channel(interaction: discord.Interaction):
     channel_id = interaction.channel_id
     DATASTORE.reminder_channel_id = channel_id
     DATASTORE.save_to_file()
+    logger.info(f"Set reminder channel to: {channel_id}")
     response = await interaction.response.send_message("This channel has been set as the reminder channel.")
-
 
 async def send_reminder(chore: Chore, reminder_type: str):
     """
@@ -395,12 +433,15 @@ async def send_reminder(chore: Chore, reminder_type: str):
     """
     reminder_channel_id = DATASTORE.reminder_channel_id
     if reminder_channel_id is None:
-        return  # No reminder channel set
+        logger.warning("Attempted to send reminder but no reminder channel is set")
+        return
 
     channel = client.get_channel(reminder_channel_id)
     if channel is None:
+        logger.error(f"Could not find reminder channel with ID: {reminder_channel_id}")
         return
 
+    logger.info(f"Sending {reminder_type} reminder for chore: {chore.title}")
     reminder_message = (
         f"Reminder ({reminder_type}):\n"
         f"**Chore:** {chore.title}\n"
@@ -424,6 +465,10 @@ async def schedule_reminders():
 
         # Wait until midday
         await asyncio.sleep(time_until_midday)
+
+        if DATASTORE.reminder_channel_id is None:
+            logger.warning("No reminder channel set. Skipping reminders.")
+            continue
 
         chores = DATASTORE.chores
         today = date.today()
@@ -495,6 +540,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
 
     # Check if the reaction is from a valid user and emoji
     if user_id not in user_emojis or user_emojis[user_id] != emoji:
+        logger.warning(f"Invalid reaction from user {user_id} with emoji {emoji}")
         return
 
     # Fetch the message and check if it corresponds to a chore
@@ -504,11 +550,14 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     
     chore = find_chore_by_title(chore_title)
     if not chore:
-        raise ValueError(f"Chore with title '{chore_title}' not found in data.")
+        error_msg = f"Chore with title '{chore_title}' not found in data."
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
     next_assignee_id = next((uid for uid in user_emojis if uid != user_id), None)
     next_assignee = await client.fetch_user(next_assignee_id)
     chore.assignee = next_assignee
+    logger.info(f"Chore '{chore.title}' reassigned to {next_assignee.name if next_assignee else 'None'}")
 
     # Save the updated chore
     DATASTORE.save_to_file()
@@ -625,13 +674,13 @@ async def delete_after_delay(interaction_or_message, delay_seconds: int = 10):
         try:
             await interaction_or_message.delete_original_response()
         except discord.NotFound:
-            # Message might have been deleted already
+            logger.debug("Interaction response already deleted")
             pass
     else:
         try:
             await interaction_or_message.delete()
         except (discord.NotFound, AttributeError):
-            # Message might have been deleted already or doesn't support deletion
+            logger.debug("Message already deleted or doesn't support deletion")
             pass
 
 
