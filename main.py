@@ -321,11 +321,9 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
     # Update the message in the channel
     channel = client.get_channel(DATASTORE.chore_channel_id)
     if channel:
-        messages = [message async for message in channel.history(limit=100)]
-        for message in messages:
-            if f"**Chore:** {title}" in message.content:
-                await generate_chore_message(chore, channel, message)
-                break
+        message = await find_chore_message_by_title(channel, title)
+        if message:
+            await generate_chore_message(chore, channel, message)
 
     await interaction.response.send_message(f"Chore '{title}' updated successfully!")
     await delete_after_delay(interaction)
@@ -351,11 +349,9 @@ async def delete_chore(interaction: discord.Interaction, title: str):
     # Delete the original message in the chore channel
     channel = client.get_channel(DATASTORE.chore_channel_id)
     if channel:
-        messages = [message async for message in channel.history(limit=100)]
-        for message in messages:
-            if f"**Chore:** {title}" in message.content:
-                await message.delete()
-                break
+        message = await find_chore_message_by_title(channel, title)
+        if message:
+            await message.delete()
 
     await interaction.response.send_message(f"Chore '{title}' deleted successfully!")
     await delete_after_delay(interaction)
@@ -522,11 +518,9 @@ async def assign_chore(interaction: discord.Interaction, title: str, user: disco
     # Update the message in the channel
     channel = client.get_channel(DATASTORE.chore_channel_id)
     if channel:
-        messages = [message async for message in channel.history(limit=100)]
-        for message in messages:
-            if f"**Chore:** {title}" in message.content:
-                await generate_chore_message(chore, channel, message)
-                break
+        message = await find_chore_message_by_title(channel, title)
+        if message:
+            await generate_chore_message(chore, channel, message)
 
     await interaction.response.send_message(f"Chore '{title}' has been assigned to {user.mention}.")
     await delete_after_delay(interaction)
@@ -558,6 +552,30 @@ def find_chore_by_title(title: str) -> Chore | None:
         Chore | None: The found chore or None if not found.
     """
     return next((c for c in DATASTORE.chores if c.title.lower() == title.lower()), None)
+
+async def find_chore_message_by_title(channel: discord.TextChannel, title: str) -> discord.Message | None:
+    """
+    Finds a chore message by its title in a case-insensitive way.
+
+    Args:
+        channel: The channel to search in
+        title: The title of the chore to find
+
+    Returns:
+        discord.Message | None: The found message or None if not found
+    """
+    messages = [message async for message in channel.history(limit=100)]
+    title_lower = title.lower()
+    
+    for message in messages:
+        if not message.content.startswith("**Chore:**"):
+            continue
+        
+        message_title = message.content.split("\n")[0].replace("**Chore:** ", "")
+        if message_title.lower() == title_lower:
+            return message
+    
+    return None
 
 
 async def delete_after_delay(interaction_or_message, delay_seconds: int = 10):
