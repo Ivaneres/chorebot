@@ -192,19 +192,7 @@ async def add_chore(interaction: discord.Interaction, title: str, assignee: disc
         await interaction.response.send_message("Error: Could not find the channel.")
         return
 
-    message_content = f"**Chore:** {chore.title}\n"
-    if chore.due_date:
-        message_content += f"**Due Date:** {chore.due_date.strftime('%d/%m/%Y')}\n"
-    if chore.schedule:
-        message_content += f"**Schedule:** {chore.schedule.to_string()}\n"
-    message_content += f"**Assigned To:** {assignee.mention if assignee else 'Unassigned'}"
-
-    message = await channel.send(message_content)
-
-    # React with the assigned user's emoji if available
-    if assignee:
-        await message.add_reaction(DATASTORE.user_emojis[str(assignee.id)])
-
+    await generate_chore_message(chore, channel)
     await interaction.response.send_message(f"Chore '{title}' added successfully!")
     await delete_after_delay(interaction)
 
@@ -320,22 +308,13 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
     # Save the updated chores back to the datastore
     DATASTORE.save_to_file()
 
-    # Regenerate the original message in the channel
+    # Update the message in the channel
     channel = client.get_channel(DATASTORE.chore_channel_id)
     if channel:
         messages = [message async for message in channel.history(limit=100)]
         for message in messages:
             if f"**Chore:** {title}" in message.content:
-                message_content = f"**Chore:** {chore.title}\n"
-                if chore.due_date:
-                    message_content += f"**Due Date:** {chore.due_date.strftime('%d/%m/%Y')}\n"
-                if chore.schedule:
-                    message_content += f"**Schedule:** {chore.schedule.to_string()}\n"
-                message_content += f"**Assigned To:** {chore.assignee.mention if chore.assignee else 'Unassigned'}"
-                await message.edit(content=message_content)
-                if new_assignee:
-                    await message.clear_reactions()
-                    await message.add_reaction(DATASTORE.user_emojis[str(chore.assignee.id)])
+                await generate_chore_message(chore, channel, message)
                 break
 
     await interaction.response.send_message(f"Chore '{title}' updated successfully!")
@@ -501,27 +480,9 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if is_chore_scheduled(chore):
         # Update the chore's due date based on schedule
         chore.due_date = chore.schedule.calculate_next_date(chore.due_date)
-
-        await message.edit(content=(
-            f"**Chore:** {chore.title}\n"
-            f"**Due Date:** {chore.due_date.strftime('%d/%m/%Y')}\n"
-            f"**Schedule:** {chore.schedule.to_string()}\n"
-            f"**Assigned To:** {chore.assignee.mention if chore.assignee else 'Unassigned'}"
-        ))
-    else:
-        await message.edit(content=(
-            f"**Chore:** {chore.title}\n"
-            f"**Assigned To:** {chore.assignee.mention if chore.assignee else 'Unassigned'}"
-        ))
-
-    # Remove the reaction to reset for the next cycle
-    await message.remove_reaction(emoji, payload.member)
-    await message.remove_reaction(emoji, client.user)
-
-    # Cycle to the next user
-    if next_assignee_id:
-        next_emoji = user_emojis[str(next_assignee_id)]
-        await message.add_reaction(next_emoji)
+    
+    # Update message in-place
+    await generate_chore_message(chore, channel, message)
 
 
 @tree.command(
@@ -548,20 +509,13 @@ async def assign_chore(interaction: discord.Interaction, title: str, user: disco
     # Save the updated chores back to the datastore
     DATASTORE.save_to_file()
 
-    # React with the assigned user's emoji
+    # Update the message in the channel
     channel = client.get_channel(DATASTORE.chore_channel_id)
     if channel:
         messages = [message async for message in channel.history(limit=100)]
         for message in messages:
             if f"**Chore:** {title}" in message.content:
-                updated_content = message.content.split("\n")
-                for i, line in enumerate(updated_content):
-                    if line.startswith("**Assigned To:**"):
-                        updated_content[i] = f"**Assigned To:** {user.mention}"
-                        break
-                await message.edit(content="\n".join(updated_content))
-                await message.clear_reactions()
-                await message.add_reaction(DATASTORE.user_emojis[str(user.id)])
+                await generate_chore_message(chore, channel, message)
                 break
 
     await interaction.response.send_message(f"Chore '{title}' has been assigned to {user.mention}.")
@@ -618,6 +572,69 @@ async def delete_after_delay(interaction_or_message, delay_seconds: int = 10):
         except (discord.NotFound, AttributeError):
             logger.debug("Message already deleted or doesn't support deletion")
             pass
+
+
+async def generate_chore_message(chore: Chore, channel: discord.TextChannel, existing_message: discord.Message = None) -> discord.Message:
+    """
+    Generates or updates a message for a chore in the specified channel.
+    Also adds the appropriate reaction emoji.
+    
+    Args:
+        chore: The chore to generate a message for
+        channel: The channel to send the message in
+        existing_message: Optional existing message to update instead of creating a new one
+        
+    Returns:
+        The sent or updated message
+    """
+    message_content = f"**Chore:** {chore.title}\n"
+    if chore.due_date:
+        message_content += f"**Due Date:** {chore.due_date.strftime('%d/%m/%Y')}\n"
+    if chore.schedule:
+        message_content += f"**Schedule:** {chore.schedule.to_string()}\n"
+    message_content += f"**Assigned To:** {chore.assignee.mention if chore.assignee else 'Unassigned'}"
+
+    if existing_message:
+        message = await existing_message.edit(content=message_content)
+        await existing_message.clear_reactions()
+    else:
+        message = await channel.send(message_content)
+    
+    if chore.assignee and str(chore.assignee.id) in DATASTORE.user_emojis:
+        await message.add_reaction(DATASTORE.user_emojis[str(chore.assignee.id)])
+    
+    return message
+
+@tree.command(
+    name="regenerate_messages",
+    description="Regenerates all chore messages in the channel"
+)
+async def regenerate_messages(interaction: discord.Interaction):
+    """Regenerates all chore messages in the channel"""
+    if DATASTORE.chore_channel_id == 0 or DATASTORE.chore_channel_id != interaction.channel_id:
+        await interaction.response.send_message("This command must be run in the chore channel.")
+        await delete_after_delay(interaction)
+        return
+        
+    # Delete all existing messages
+    channel = interaction.channel
+    await channel.purge()
+    
+    # Send the intro message first
+    await channel.send(INTRO_MESSAGE)
+    
+    # Regenerate messages for all chores
+    regenerated_count = 0
+    for chore in DATASTORE.chores:
+        try:
+            await generate_chore_message(chore, channel)
+            regenerated_count += 1
+        except Exception as e:
+            logger.error(f"Failed to regenerate message for chore '{chore.title}': {e}")
+    
+    logger.info(f"Regenerated {regenerated_count} chore messages")
+    await interaction.response.send_message(f"Successfully regenerated {regenerated_count} chore messages!")
+    await delete_after_delay(interaction)
 
 
 client.run(os.getenv("DISCORD_TOKEN"))
