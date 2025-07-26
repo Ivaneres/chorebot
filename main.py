@@ -28,13 +28,23 @@ intents.message_content = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-# Initialize the datastore
-DATASTORE = Datastore.load_from_file("data.json", client)
+# Initialize datastore variable
+DATASTORE = None
 
 
 @client.event
 async def on_ready():
     logger.info(f'Logged in as {client.user}')
+    
+    # Load data asynchronously
+    global DATASTORE
+    try:
+        DATASTORE = await Datastore.load_from_file("data.json", client)
+        logger.info("Data loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to load data: {e}")
+        return
+
     try:
         # Sync the command tree with Discord
         await tree.sync()

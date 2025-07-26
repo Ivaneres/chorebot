@@ -5,6 +5,9 @@ from datetime import date, timedelta
 import json
 from pathlib import Path
 import discord
+import logging
+
+logger = logging.getLogger('ChoreBot')
 
 
 class FrequencyType(Enum):
@@ -119,7 +122,8 @@ class Chore:
     assignee: discord.User | None
     due_date: date | None
 
-    def from_dict(data: dict, client: discord.Client) -> Chore:
+    @staticmethod
+    async def from_dict(data: dict, client: discord.Client) -> Chore:
         schedule = None
         if data.get("schedule"):
             schedule = Schedule(
@@ -127,10 +131,17 @@ class Chore:
                 data["schedule"]["interval"]
             )
             
+        assignee = None
+        if data.get("assignee"):
+            try:
+                assignee = await client.fetch_user(int(data["assignee"]))
+            except discord.NotFound:
+                logger.warning(f"Could not find user with ID {data['assignee']}")
+            
         return Chore(
             title=data["title"],
             schedule=schedule,
-            assignee=discord.utils.get(client.get_all_members(), id=int(data["assignee"])) if data.get("assignee") else None,
+            assignee=assignee,
             due_date=date.fromisoformat(data["due_date"]) if data.get("due_date") else None
         )
     
@@ -154,7 +165,8 @@ class Datastore:
     user_emojis: dict[str, str]
     filepath: Path
 
-    def load_from_file(file_path_str: str, client: discord.Client) -> Datastore:
+    @staticmethod
+    async def load_from_file(file_path_str: str, client: discord.Client) -> Datastore:
         filepath = Path(file_path_str)
         if not filepath.exists():
             raise FileNotFoundError(f"Data file not found: {filepath}")
@@ -162,7 +174,12 @@ class Datastore:
         with open(filepath, "r") as file:
             data = json.load(file)
 
-        chores = [Chore.from_dict(chore, client) for chore in data.get("chores", [])]
+        # Load chores asynchronously
+        chores = []
+        for chore_data in data.get("chores", []):
+            chore = await Chore.from_dict(chore_data, client)
+            chores.append(chore)
+
         return Datastore(
             chores=chores,
             chore_channel_id=data.get("chore_channel_id"),
