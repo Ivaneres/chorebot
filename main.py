@@ -1,6 +1,6 @@
 import discord
 from discord import app_commands
-from data import Frequency, Chore, Datastore
+from data import FrequencyType, Schedule, Chore, Datastore
 from datetime import date, datetime, timedelta
 import asyncio
 from emoji import is_emoji
@@ -63,42 +63,6 @@ async def setup_channel(interaction: discord.Interaction):
     await interaction.response.send_message(INTRO_MESSAGE)
 
 
-def parse_frequency(frequency: str) -> Frequency:
-    frequency = frequency.lower()
-    if any(x in frequency for x in ["day", "daily"]):
-        return Frequency.DAY
-    if "week" in frequency:
-        return Frequency.WEEK
-    if "month" in frequency:
-        return Frequency.MONTH
-    if "year" in frequency:
-        return Frequency.YEAR
-    raise ValueError(f"{frequency} is not a valid frequency")
-
-
-def parse_schedule(schedule: str) -> tuple[int, Frequency]:
-    """
-    Parses the schedule string into repeats and frequency.
-
-    Args:
-        schedule (str): The schedule string in the format "repeats/frequency".
-
-    Returns:
-        tuple[int, Frequency]: A tuple containing the number of repeats and the frequency.
-    """
-    if len(schedule.split("/")) != 2:
-        raise ValueError("Schedule must follow 'repeats/frequency' format")
-
-    schedule_parts = schedule.split("/")
-    repeats = int(schedule_parts[0])
-    frequency = parse_frequency(schedule_parts[1])
-
-    if repeats < 1:
-        raise ValueError("Repeats must be at least 1")
-
-    return repeats, frequency
-
-
 def parse_date(date_str: str) -> date:
     """
     Parses a date string into a date object. Supports multiple formats.
@@ -158,6 +122,12 @@ def check_user_has_emoji(user_id: str, user_emojis: dict) -> bool:
     name="add_chore",
     description="Adds a chore to the list",
 )
+@app_commands.describe(
+    title="The title of the chore",
+    assignee="Who to assign the chore to",
+    start_date="When the chore should start (e.g., 25/07/2025)",
+    schedule="How often the chore repeats (e.g., daily, weekly, every 3 days, twice a month)"
+)
 async def add_chore(interaction: discord.Interaction, title: str, assignee: discord.User, start_date: str = None, schedule: str = None):
     if DATASTORE.chore_channel_id == 0:
         logger.error("Attempted to add chore before channel setup")
@@ -181,14 +151,13 @@ async def add_chore(interaction: discord.Interaction, title: str, assignee: disc
         await delete_after_delay(interaction)
         return
 
-    # Allow chores with no due date, frequency, or repeats
-    repeats = None
-    frequency = None
+    # Parse schedule if provided
+    chore_schedule = None
     start_date_parsed = None
 
     if schedule:
         try:
-            repeats, frequency = parse_schedule(schedule)
+            chore_schedule = Schedule.from_string(schedule)
         except ValueError as e:
             await interaction.response.send_message(f"Error: {e}")
             await delete_after_delay(interaction)
@@ -207,8 +176,7 @@ async def add_chore(interaction: discord.Interaction, title: str, assignee: disc
     # Create a new chore object
     chore = Chore(
         title=title,
-        repeats=repeats,
-        frequency=frequency,
+        schedule=chore_schedule,
         assignee=assignee,
         due_date=start_date_parsed,
     )
@@ -227,10 +195,8 @@ async def add_chore(interaction: discord.Interaction, title: str, assignee: disc
     message_content = f"**Chore:** {chore.title}\n"
     if chore.due_date:
         message_content += f"**Due Date:** {chore.due_date.strftime('%d/%m/%Y')}\n"
-    if chore.frequency:
-        message_content += f"**Frequency:** {chore.frequency.value}\n"
-    if chore.repeats:
-        message_content += f"**Repeats:** {chore.repeats}\n"
+    if chore.schedule:
+        message_content += f"**Schedule:** {chore.schedule.to_string()}\n"
     message_content += f"**Assigned To:** {assignee.mention if assignee else 'Unassigned'}"
 
     message = await channel.send(message_content)
@@ -286,7 +252,14 @@ async def set_emoji(interaction: discord.Interaction, emoji: str):
     name="edit_chore",
     description="Edits an existing chore",
 )
-async def edit_chore(interaction: discord.Interaction, title: str, new_title: str = None, new_due_date: str = None, new_assignee: discord.User = None, new_frequency: str = None, new_repeats: str = None):
+@app_commands.describe(
+    title="The title of the chore to edit",
+    new_title="New title for the chore",
+    new_due_date="New due date (e.g., 25/07/2025 or 'None' to remove)",
+    new_assignee="New person to assign the chore to",
+    new_schedule="New schedule (e.g., daily, weekly, every 3 days, or 'None' to remove)"
+)
+async def edit_chore(interaction: discord.Interaction, title: str, new_title: str = None, new_due_date: str = None, new_assignee: discord.User = None, new_schedule: str = None):
     # Find the chore to edit
     chore = find_chore_by_title(title)
     if chore is None:
@@ -303,10 +276,8 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
         changes.append(f"due_date: {chore.due_date} -> {new_due_date}")
     if new_assignee:
         changes.append(f"assignee: {chore.assignee.name if chore.assignee else 'None'} -> {new_assignee.name}")
-    if new_frequency:
-        changes.append(f"frequency: {chore.frequency.value if chore.frequency else 'None'} -> {new_frequency}")
-    if new_repeats:
-        changes.append(f"repeats: {chore.repeats} -> {new_repeats}")
+    if new_schedule:
+        changes.append(f"schedule: {chore.schedule.to_string() if chore.schedule else 'None'} -> {new_schedule}")
     
     logger.info(f"Editing chore '{title}'. Changes: {', '.join(changes)}")
 
@@ -322,8 +293,7 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
 
     if new_due_date == "None":
         chore.due_date = None
-        chore.frequency = None
-        chore.repeats = None
+        chore.schedule = None
     elif new_due_date:
         try:
             chore.due_date = parse_date(new_due_date)  # Validate the date format
@@ -337,21 +307,13 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
     if new_assignee:
         chore.assignee = new_assignee
 
-    if new_frequency:
+    if new_schedule == "None":
+        chore.schedule = None
+    elif new_schedule:
         try:
-            chore.frequency = parse_frequency(new_frequency)
+            chore.schedule = Schedule.from_string(new_schedule)
         except ValueError as e:
             await interaction.response.send_message(f"Error: {e}")
-            await delete_after_delay(interaction)
-            return
-
-    if new_repeats == "None":
-        chore.repeats = None
-    elif new_repeats:
-        try:
-            chore.repeats = int(new_repeats)
-        except ValueError:
-            await interaction.response.send_message("Error: Repeats must be an integer.")
             await delete_after_delay(interaction)
             return
 
@@ -367,10 +329,8 @@ async def edit_chore(interaction: discord.Interaction, title: str, new_title: st
                 message_content = f"**Chore:** {chore.title}\n"
                 if chore.due_date:
                     message_content += f"**Due Date:** {chore.due_date.strftime('%d/%m/%Y')}\n"
-                if chore.frequency:
-                    message_content += f"**Frequency:** {chore.frequency.value}\n"
-                if chore.repeats:
-                    message_content += f"**Repeats:** {chore.repeats}\n"
+                if chore.schedule:
+                    message_content += f"**Schedule:** {chore.schedule.to_string()}\n"
                 message_content += f"**Assigned To:** {chore.assignee.mention if chore.assignee else 'Unassigned'}"
                 await message.edit(content=message_content)
                 if new_assignee:
@@ -446,7 +406,7 @@ async def send_reminder(chore: Chore, reminder_type: str):
         f"Reminder ({reminder_type}):\n"
         f"**Chore:** {chore.title}\n"
         f"**Due Date:** {chore.due_date.strftime('%d/%m/%Y')}\n"
-        f"**Frequency:** {chore.repeats}/{chore.frequency.value}\n"
+        f"**Schedule:** {chore.schedule.to_string()}\n"
         f"**Assigned To:** {chore.assignee.mention if chore.assignee else 'Unassigned'}"
     )
     await channel.send(reminder_message)
@@ -454,7 +414,7 @@ async def send_reminder(chore: Chore, reminder_type: str):
 
 async def schedule_reminders():
     """
-    Schedules reminders for all chores based on their frequency and repeats.
+    Schedules reminders for all chores based on their schedule.
     Sends reminders at a set time (e.g., midday).
     """
     while True:
@@ -477,13 +437,16 @@ async def schedule_reminders():
             if not is_chore_scheduled(chore):
                 continue
 
-            # Calculate reminder dates based on frequency and repeats
-            if chore.frequency == Frequency.WEEK:
+            # Calculate reminder dates based on schedule
+            if chore.schedule.frequency_type == FrequencyType.WEEKLY:
                 reminder_date = chore.due_date - timedelta(days=1)
-            elif chore.frequency == Frequency.MONTH:
+            elif chore.schedule.frequency_type == FrequencyType.MONTHLY:
                 reminder_date = chore.due_date - timedelta(days=3)
-            elif chore.frequency == Frequency.YEAR:
+            elif chore.schedule.frequency_type == FrequencyType.YEARLY:
                 reminder_date = chore.due_date - timedelta(weeks=1)
+            else:
+                # For daily and X-day intervals, remind on the due date
+                reminder_date = chore.due_date
 
             # Send reminders
             if today == reminder_date:
@@ -496,36 +459,9 @@ async def schedule_reminders():
 
 def is_chore_scheduled(chore: Chore) -> bool:
     """
-    Checks if a chore is scheduled, i.e., has required fields: due_date, frequency, and repeats.
+    Checks if a chore is scheduled, i.e., has required fields: due_date and schedule.
     """
-    return all([chore.frequency, chore.repeats, chore.due_date])
-
-
-def calculate_next_due_date(chore: Chore) -> date:
-    """
-    Calculates the next due date for a chore based on its frequency and repeats.
-
-    Args:
-        chore (Chore): The chore object.
-
-    Returns:
-        date: The next due date for the chore.
-    """
-    if not is_chore_scheduled(chore):
-        return None
-
-    if chore.frequency == Frequency.DAY:
-        return chore.due_date + timedelta(days=1 // chore.repeats)
-    elif chore.frequency == Frequency.WEEK:
-        return chore.due_date + timedelta(weeks=1 // chore.repeats)
-    elif chore.frequency == Frequency.MONTH:
-        days_in_month = (chore.due_date.replace(day=28) + timedelta(days=4)).day
-        return chore.due_date + timedelta(days=days_in_month // chore.repeats)
-    elif chore.frequency == Frequency.YEAR:
-        days_in_year = 366 if chore.due_date.year % 4 == 0 else 365
-        return chore.due_date + timedelta(days=days_in_year // chore.repeats)
-
-    raise ValueError(f"Invalid frequency: {chore.frequency}")
+    return bool(chore.schedule and chore.due_date)
 
 
 @client.event
@@ -563,13 +499,13 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     DATASTORE.save_to_file()
 
     if is_chore_scheduled(chore):
-        # Update the chore's due date based on frequency and repeats
-        chore.due_date = calculate_next_due_date(chore)
+        # Update the chore's due date based on schedule
+        chore.due_date = chore.schedule.calculate_next_date(chore.due_date)
 
         await message.edit(content=(
             f"**Chore:** {chore.title}\n"
             f"**Due Date:** {chore.due_date.strftime('%d/%m/%Y')}\n"
-            f"**Frequency:** {chore.frequency.value}\n"
+            f"**Schedule:** {chore.schedule.to_string()}\n"
             f"**Assigned To:** {chore.assignee.mention if chore.assignee else 'Unassigned'}"
         ))
     else:
