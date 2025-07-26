@@ -461,7 +461,6 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
 
     # Check if the reaction is from a valid user and emoji
     if user_id not in user_emojis or user_emojis[user_id] != emoji:
-        logger.warning(f"Invalid reaction from user {user_id} with emoji {emoji}")
         return
 
     # Fetch the message and check if it corresponds to a chore
