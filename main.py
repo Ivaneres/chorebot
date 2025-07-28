@@ -31,6 +31,10 @@ tree = app_commands.CommandTree(client)
 # Initialize datastore variable
 DATASTORE = None
 
+# Global state for pause functionality
+PAUSE_MESSAGE_ID = None
+IS_PAUSED = False
+
 
 @client.event
 async def on_ready():
@@ -411,6 +415,10 @@ async def schedule_reminders():
         # Wait until midday
         await asyncio.sleep(time_until_midday)
 
+        # Skip reminders if bot is paused or no reminder channel is set
+        if IS_PAUSED:
+            logger.info("Bot is paused. Skipping reminders.")
+            continue
         if DATASTORE.reminder_channel_id is None:
             logger.warning("No reminder channel set. Skipping reminders.")
             continue
@@ -453,6 +461,14 @@ def is_chore_scheduled(chore: Chore) -> bool:
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     channel_id = DATASTORE.chore_channel_id
     if payload.channel_id != channel_id:
+        return
+
+    # Ignore reactions if bot is paused
+    if IS_PAUSED:
+        channel = client.get_channel(channel_id)
+        if channel:
+            message = await channel.fetch_message(payload.message_id)
+            await message.remove_reaction(payload.emoji, payload.member)
         return
 
     user_emojis = DATASTORE.user_emojis
@@ -631,6 +647,69 @@ async def generate_chore_message(chore: Chore, channel: discord.TextChannel, exi
         await message.add_reaction(DATASTORE.user_emojis[str(chore.assignee.id)])
     
     return message
+
+@tree.command(
+    name="pause",
+    description="Pauses the bot's reminder and reaction functionality"
+)
+async def pause_bot(interaction: discord.Interaction):
+    """Pauses the bot's reminder and reaction functionality"""
+    global IS_PAUSED, PAUSE_MESSAGE_ID
+    
+    if IS_PAUSED:
+        await interaction.response.send_message("The bot is already paused!")
+        await delete_after_delay(interaction)
+        return
+
+    if DATASTORE.chore_channel_id == 0 or DATASTORE.chore_channel_id != interaction.channel_id:
+        await interaction.response.send_message("This command must be run in the chore channel.")
+        await delete_after_delay(interaction)
+        return
+
+    IS_PAUSED = True
+    logger.info("Bot paused")
+    
+    # Send the pause message
+    pause_message = await interaction.channel.send("🔴 **ChoreBot is currently paused**\nReminders and reactions are disabled until the bot is unpaused.")
+    PAUSE_MESSAGE_ID = pause_message.id
+    
+    await interaction.response.send_message("Bot has been paused. Use `/unpause` to resume operations.")
+    await delete_after_delay(interaction)
+
+
+@tree.command(
+    name="unpause",
+    description="Resumes the bot's reminder and reaction functionality"
+)
+async def unpause_bot(interaction: discord.Interaction):
+    """Resumes the bot's reminder and reaction functionality"""
+    global IS_PAUSED, PAUSE_MESSAGE_ID
+    
+    if not IS_PAUSED:
+        await interaction.response.send_message("The bot is not paused!")
+        await delete_after_delay(interaction)
+        return
+
+    if DATASTORE.chore_channel_id == 0 or DATASTORE.chore_channel_id != interaction.channel_id:
+        await interaction.response.send_message("This command must be run in the chore channel.")
+        await delete_after_delay(interaction)
+        return
+
+    IS_PAUSED = False
+    logger.info("Bot unpaused")
+    
+    # Delete the pause message if it exists
+    if PAUSE_MESSAGE_ID:
+        try:
+            message = await interaction.channel.fetch_message(PAUSE_MESSAGE_ID)
+            await message.delete()
+        except (discord.NotFound, discord.Forbidden):
+            pass  # Message might have been deleted already
+        PAUSE_MESSAGE_ID = None
+    
+    await interaction.response.send_message("Bot has been unpaused. Normal operations resumed.")
+    await delete_after_delay(interaction)
+
 
 @tree.command(
     name="regenerate_messages",
