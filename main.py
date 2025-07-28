@@ -368,9 +368,9 @@ async def delete_chore(interaction: discord.Interaction, title: str):
 async def set_reminder_channel(interaction: discord.Interaction):
     channel_id = interaction.channel_id
     DATASTORE.reminder_channel_id = channel_id
-    DATASTORE.save_to_file()
     logger.info(f"Set reminder channel to: {channel_id}")
-    response = await interaction.response.send_message("This channel has been set as the reminder channel.")
+    await interaction.response.send_message("This channel has been set as the reminder channel.")
+    DATASTORE.save_to_file()
 
 def check_chore_reminders(chore: Chore, today: date) -> str | None:
     """
@@ -513,12 +513,12 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     chore.assignee = next_assignee
     logger.info(f"Chore '{chore.title}' reassigned to {next_assignee.name if next_assignee else 'None'}")
 
-    # Save the updated chore
-    DATASTORE.save_to_file()
-
     if is_chore_scheduled(chore):
         # Update the chore's due date based on schedule
         chore.due_date = chore.schedule.calculate_next_date(chore.due_date)
+
+    # Save the updated chore
+    DATASTORE.save_to_file()
     
     # Update message in-place
     await generate_chore_message(chore, channel, message)
