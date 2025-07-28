@@ -372,6 +372,40 @@ async def set_reminder_channel(interaction: discord.Interaction):
     logger.info(f"Set reminder channel to: {channel_id}")
     response = await interaction.response.send_message("This channel has been set as the reminder channel.")
 
+def check_chore_reminders(chore: Chore, today: date) -> str | None:
+    """
+    Checks a chore's schedule and due date to determine if a reminder should be sent.
+    
+    Args:
+        chore (Chore): The chore to check
+        today (date): The date to check against
+        
+    Returns:
+        str | None: The type of reminder to send ("Upcoming", "Due Today", "Overdue") or None if no reminder needed
+    """
+    if not chore.due_date:
+        return None
+        
+    # Calculate reminder dates based on schedule
+    freq = chore.schedule.frequency_type if chore.schedule else None
+    if freq == FrequencyType.WEEKLY or freq == FrequencyType.DAILY or freq == FrequencyType.DAYS:
+        reminder_date = chore.due_date - timedelta(days=1)
+    elif freq == FrequencyType.MONTHLY:
+        reminder_date = chore.due_date - timedelta(days=5)
+    elif freq == FrequencyType.YEARLY:
+        reminder_date = chore.due_date - timedelta(weeks=2)
+    else:
+        reminder_date = None
+        
+    # Determine reminder type
+    if today == reminder_date:
+        return "Upcoming"
+    if today == chore.due_date:
+        return "Due Today"
+    if chore.due_date < today:
+        return "Overdue"
+    return None
+
 async def send_reminder(chore: Chore, reminder_type: str):
     """
     Sends a reminder for a chore.
@@ -423,31 +457,15 @@ async def schedule_reminders():
             logger.warning("No reminder channel set. Skipping reminders.")
             continue
 
+        logger.info("Running scheduled reminders")
+
         chores = DATASTORE.chores
         today = date.today()
 
         for chore in chores:
-            if not is_chore_scheduled(chore):
-                continue
-
-            # Calculate reminder dates based on schedule
-            freq = chore.schedule.frequency_type
-            if freq == FrequencyType.WEEKLY or freq == FrequencyType.DAILY or freq == FrequencyType.DAYS:
-                reminder_date = chore.due_date - timedelta(days=1)
-            elif freq == FrequencyType.MONTHLY:
-                reminder_date = chore.due_date - timedelta(days=5)
-            elif freq == FrequencyType.YEARLY:
-                reminder_date = chore.due_date - timedelta(weeks=2)
-            else:
-                raise ValueError(f"Invalid frequency type: {freq}")
-
-            # Send reminders
-            if today == reminder_date:
-                await send_reminder(chore, "Upcoming")
-            if today == chore.due_date:
-                await send_reminder(chore, "Due Today")
-            if chore.due_date < today:
-                await send_reminder(chore, "Overdue")
+            reminder_type = check_chore_reminders(chore, today)
+            if reminder_type:
+                await send_reminder(chore, reminder_type)
 
 
 def is_chore_scheduled(chore: Chore) -> bool:
@@ -710,6 +728,32 @@ async def unpause_bot(interaction: discord.Interaction):
     await interaction.response.send_message("Bot has been unpaused. Normal operations resumed.")
     await delete_after_delay(interaction)
 
+
+@tree.command(
+    name="send_reminders",
+    description="Checks and sends reminders for all chores immediately"
+)
+async def check_reminders(interaction: discord.Interaction):
+    """Manually triggers reminder checks and sends notifications for all chores"""
+    if DATASTORE.reminder_channel_id is None:
+        await interaction.response.send_message("No reminder channel has been set. Please set one using `/set_reminder_channel` first.")
+        await delete_after_delay(interaction)
+        return
+
+    today = date.today()
+    sent_count = 0
+    
+    for chore in DATASTORE.chores:
+        reminder_type = check_chore_reminders(chore, today)
+        if reminder_type:
+            await send_reminder(chore, reminder_type)
+            sent_count += 1
+    
+    if sent_count > 0:
+        await interaction.response.send_message(f"Sent {sent_count} reminders.")
+    else:
+        await interaction.response.send_message("No reminders needed at this time.")
+    await delete_after_delay(interaction)
 
 @tree.command(
     name="regenerate_messages",
