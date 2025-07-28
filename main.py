@@ -429,7 +429,7 @@ async def send_reminder(chore: Chore, reminder_type: str):
         f"Reminder ({reminder_type}):\n"
         f"**Chore:** {chore.title}\n"
         f"**Due Date:** {chore.due_date.strftime('%d/%m/%Y')}\n"
-        f"**Schedule:** {chore.schedule.to_string()}\n"
+        f"**Schedule:** {chore.schedule.to_string()}\n" if chore.schedule else ""
         f"**Assigned To:** {chore.assignee.mention if chore.assignee else 'Unassigned'}"
     )
     await channel.send(reminder_message)
