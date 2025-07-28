@@ -423,15 +423,15 @@ async def schedule_reminders():
                 continue
 
             # Calculate reminder dates based on schedule
-            if chore.schedule.frequency_type == FrequencyType.WEEKLY:
+            freq = chore.schedule.frequency_type
+            if freq == FrequencyType.WEEKLY or freq == FrequencyType.DAILY or freq == FrequencyType.DAYS:
                 reminder_date = chore.due_date - timedelta(days=1)
-            elif chore.schedule.frequency_type == FrequencyType.MONTHLY:
-                reminder_date = chore.due_date - timedelta(days=3)
-            elif chore.schedule.frequency_type == FrequencyType.YEARLY:
-                reminder_date = chore.due_date - timedelta(weeks=1)
+            elif freq == FrequencyType.MONTHLY:
+                reminder_date = chore.due_date - timedelta(days=5)
+            elif freq == FrequencyType.YEARLY:
+                reminder_date = chore.due_date - timedelta(weeks=2)
             else:
-                # For daily and X-day intervals, remind on the due date
-                reminder_date = chore.due_date
+                raise ValueError(f"Invalid frequency type: {freq}")
 
             # Send reminders
             if today == reminder_date:
